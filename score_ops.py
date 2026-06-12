@@ -32,8 +32,13 @@ def turn_score_monophonic(score: m21.stream.Score) -> m21.stream.Score:
 
 
 def randomly_modify_pitches(
-    music: m21.stream.Stream, probability: float = 0.3, dist: int = 7
-):
+    music: m21.stream.Stream,
+    probability: float = 0.3,
+    dist: int = 7,
+    in_place: bool = True,
+) -> m21.stream.Stream:
+    if not in_place:
+        music = deepcopy(music)
     for note in music.recurse(classFilter=m21.note.Note):
         if random.random() <= probability:
             transpose_to = random.randint(-dist, dist)
@@ -41,7 +46,13 @@ def randomly_modify_pitches(
     return music
 
 
-def randomly_convert_to_rest(music: m21.stream.Stream, probability: float = 0.1):
+def randomly_convert_to_rest(
+    music: m21.stream.Stream,
+    probability: float = 0.1,
+    in_place: bool = True,
+) -> m21.stream.Stream:
+    if not in_place:
+        music = deepcopy(music)
     to_replace = []
     for note in music.recurse(classFilter=m21.note.Note):
         if random.random() <= probability:
@@ -55,7 +66,13 @@ def randomly_convert_to_rest(music: m21.stream.Stream, probability: float = 0.1)
     return music
 
 
-def randomly_modify_main_key(music, probability: float = 0.1):
+def randomly_modify_main_key(
+    music,
+    probability: float = 0.1,
+    in_place: bool = True,
+) -> m21.stream.Stream:
+    if not in_place:
+        music = deepcopy(music)
     if len(list(music.recurse(classFilter=m21.key.KeySignature))) == 0:
         if random.random() <= probability:
             music.insert(0, m21.key.KeySignature(random.randint(-7, 7)))
@@ -67,7 +84,13 @@ def randomly_modify_main_key(music, probability: float = 0.1):
     return music
 
 
-def randomly_insert_key_change(music: m21.stream.Stream, probability=0.1):
+def randomly_insert_key_change(
+    music: m21.stream.Stream,
+    probability: float = 0.1,
+    in_place: bool = True,
+) -> m21.stream.Stream:
+    if not in_place:
+        music = deepcopy(music)
     notes = list(music.recurse(classFilter=m21.note.Note))
     if len(notes) > 3 and random.random() <= probability:
         position = random.randint(0, len(notes) - 1)
@@ -76,4 +99,12 @@ def randomly_insert_key_change(music: m21.stream.Stream, probability=0.1):
             notes[position].offset, m21.key.KeySignature(sharps)
         )
 
+    return music
+
+
+def rebuild_beams(music: m21.stream.Stream) -> m21.stream.Stream:
+    if music.streamStatus.haveBeamsBeenMade():
+        for elm in music.recurse().notes:
+            elm.beams = None
+    music.makeBeams(inPlace=True)
     return music
