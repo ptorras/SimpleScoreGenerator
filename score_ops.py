@@ -1,18 +1,19 @@
-import music21 as m21
 import random
 from copy import deepcopy
 
-import matplotlib.pyplot as plt
+import music21 as m21
 
 
 def create_test_part(score: m21.stream.Score) -> m21.stream.Score:
-    score = m21.stream.Score(score.parts[-1].getElementsByClass(m21.stream.Measure)[:4])
+    score = m21.stream.Score(
+        m21.stream.Part(score.parts[-1].getElementsByClass(m21.stream.Measure)[:4])
+    )
     score = deepcopy(score)
     return score
 
 
 def turn_measure_monophonic(measure: m21.stream.Measure) -> m21.stream.Measure:
-    measure = measure.flattenUnnecessaryVoices()
+    measure.flattenUnnecessaryVoices(inPlace=True)
     voices = measure.getElementsByClass(m21.stream.Voice)
     if len(voices) > 1:
         measure = measure.cloneEmpty()
@@ -103,8 +104,9 @@ def randomly_insert_key_change(
 
 
 def rebuild_beams(music: m21.stream.Stream) -> m21.stream.Stream:
-    if music.streamStatus.haveBeamsBeenMade():
-        for elm in music.recurse().notes:
-            elm.beams = None
-    music.makeBeams(inPlace=True)
+    for part in music.getElementsByClass(m21.stream.Part):
+        if part.streamStatus.haveBeamsBeenMade():
+            for elm in part.recurse().notes:
+                elm.beams = None
+        part.makeBeams(inPlace=True)
     return music
