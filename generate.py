@@ -32,7 +32,7 @@ def plot_bboxes(image, boxes, output: Path | None = None):
     fig = plt.figure()
     ax = plt.axes()
     plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    cmap = plt.cm.get_cmap("tab20")  # good discrete palette
+    cmap = plt.get_cmap("tab20")  # good discrete palette
 
     for ii, (x, y, w, h) in enumerate(boxes):
         color = cmap(ii % cmap.N)
@@ -225,7 +225,7 @@ def render(
                 ]
             ).astype(int)
             metadata = [
-                (mxml_id, params["smufl_class"]) for mxml_id, params in bboxes.items()
+                (mxml_id, params["smufl_id"]) for mxml_id, params in bboxes.items()
             ]
             with open(json_path, "w") as f_json:
                 json.dump(bboxes, f_json, indent=4)
