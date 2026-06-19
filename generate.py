@@ -9,13 +9,49 @@ from pathlib import Path
 import albumentations as alb
 import augraphy as aug
 import cv2
+import matplotlib.pyplot as plt
 import music21 as m21
 import numpy as np
+from matplotlib import patches
 from PIL import Image
 
 import image_ops
 import score_ops
 from proc import Inkscape, MuseScore, MXMLProcessor, SVGProcessor, Verovio
+
+
+def showimg(img):
+    plt.figure()
+    plt.imshow(img)
+    plt.axis("off")
+    plt.show()
+    plt.close()
+
+
+def plot_bboxes(image, boxes, output: Path | None = None):
+    fig = plt.figure()
+    ax = plt.axes()
+    plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    cmap = plt.cm.get_cmap("tab20")  # good discrete palette
+
+    for ii, (x, y, w, h) in enumerate(boxes):
+        color = cmap(ii % cmap.N)
+        ax.add_patch(
+            patches.Rectangle(
+                xy=(x, y),
+                width=w,
+                height=h,
+                fill=False,  # outlined only
+                edgecolor=color,  # increment color per box
+                linewidth=1.0,
+            )
+        )
+    if output is None:
+        plt.show()
+    else:
+        plt.savefig(output)
+    plt.close(fig)
+
 
 BACKGROUND_PATH = Path("./backgrounds")
 
@@ -99,7 +135,7 @@ ALBUMENTATION_PIPELINE = alb.Compose(
 
 
 def generate_musicxmls(source_path: Path, target_path: Path) -> None:
-    for ii, source_path in enumerate(source_path.glob("**.mxl")):
+    for ii, source_path in enumerate(source_path.rglob("*.mxl")):
         score = m21.converter.parse(source_path)
         if not isinstance(score, m21.stream.Score):
             logging.warning(
@@ -130,6 +166,8 @@ def generate_musicxmls(source_path: Path, target_path: Path) -> None:
                     for fifths in range(-6, 6):
                         variation = fifths + 7
                         transposed = score_slice.transpose(fifths)
+                        if transposed is None:
+                            continue
                         score_ops.randomly_convert_to_rest(transposed)
                         score_ops.randomly_modify_pitches(transposed)
                         transposed = score_ops.rebuild_beams(transposed)
@@ -137,78 +175,102 @@ def generate_musicxmls(source_path: Path, target_path: Path) -> None:
                             target_path
                             / f"w{ii}_p{jj}_m{measure_start}to{measure_end}_v{variation}.musicxml"
                         )
-                        transposed.write(
-                            "musicxml",
-                            score_path,
-                        )
+                        try:
+                            transposed.write(
+                                "musicxml",
+                                score_path,
+                            )
+                        except Exception as exc:
+                            logging.warning(
+                                "Exception while exporting musicxml: {exc}. Skipping..."
+                            )
 
 
-def render(source_path: Path, target_path: Path) -> None:
+def render(
+    source_path: Path,
+    target_path: Path,
+    create_debug_images: bool = False,
+) -> None:
     for musicxml_path in source_path.glob("*.musicxml"):
-        mxml_proc = MXMLProcessor()
-        svg_proc = SVGProcessor()
+        try:
+            mxml_proc = MXMLProcessor()
+            svg_proc = SVGProcessor()
 
-        mxml_proc.process(musicxml_path)
-        svg_path = musicxml_path.with_suffix(".svg")
-        png_path = musicxml_path.with_suffix(".png")
-        json_path = musicxml_path.with_suffix(".json")
-        Verovio.run(musicxml_path, svg_path)
-        svg_proc.process(svg_path)
-        id2smufl = {
-            mxml_id: smufl_id
-            for _, mxml_id, smufl_id in svg_proc.extract_objects(svg_path)
-        }
+            mxml_proc.process(musicxml_path)
+            svg_path = musicxml_path.with_suffix(".svg")
+            png_path = musicxml_path.with_suffix(".png")
+            json_path = musicxml_path.with_suffix(".json")
+            Verovio.run(musicxml_path, svg_path)
+            svg_proc.process(svg_path)
+            id2smufl = {
+                mxml_id: smufl_id
+                for _, mxml_id, smufl_id in svg_proc.extract_objects(svg_path)
+            }
 
-        Inkscape.run(svg_path, png_path)
-        bboxes = {
-            ident: {**values, "smufl_id": id2smufl[ident]}
-            for ident, values in Inkscape.run_bboxes(svg_path).items()
-            if ident in id2smufl
-        }
-        bboxes_albumentations = np.array(
-            [
+            Inkscape.run(svg_path, png_path)
+            bboxes = {
+                ident: {**values, "smufl_id": id2smufl[ident]}
+                for ident, values in Inkscape.run_bboxes(svg_path).items()
+                if ident in id2smufl
+            }
+            bboxes_albumentations = np.array(
                 [
-                    params["x"] - 1,
-                    params["y"] - 1,
-                    params["w"] + 2,
-                    params["h"] + 2,
+                    [
+                        params["x"] - 1,
+                        params["y"] - 1,
+                        params["w"] + 2,
+                        params["h"] + 2,
+                    ]
+                    for _, params in bboxes.items()
                 ]
-                for _, params in bboxes.items()
+            ).astype(int)
+            metadata = [
+                (mxml_id, params["smufl_class"]) for mxml_id, params in bboxes.items()
             ]
-        ).astype(int)
-        metadata = [
-            (mxml_id, params["smufl_class"]) for mxml_id, params in data.items()
-        ]
-        with open(json_path, "w") as f_json:
-            json.dump(bboxes, f_json, indent=4)
+            with open(json_path, "w") as f_json:
+                json.dump(bboxes, f_json, indent=4)
 
-        pipeline = aug.AugraphyPipeline(
-            INK_AUGMENTATIONS,
-            PAPER_AUGMENTATIONS,
-            [],
-        )
-        foreground = np.array(Image.open(png_path).convert("RGB"))
-        albumentation_output = ALBUMENTATION_PIPELINE(
-            image=foreground,
-            bboxes=bboxes_albumentations,
-        )
-        augraphy_output = pipeline(albumentation_output["image"])
-
-        post_bboxes = {
-            mxml_id: {"smufl_id": smufl_id, "x": x, "y": y, "w": w, "h": h}
-            for (x, y, w, h), (mxml_id, smufl_id) in zip(
-                albumentation_output["bboxes"].astype(int).tolist(), metadata
+            pipeline = aug.AugraphyPipeline(
+                INK_AUGMENTATIONS,
+                PAPER_AUGMENTATIONS,
+                [],
             )
-        }
+            foreground = np.array(Image.open(png_path).convert("RGB"))
+            albumentation_output = ALBUMENTATION_PIPELINE(
+                image=foreground,
+                bboxes=bboxes_albumentations,
+            )
+            augraphy_output = pipeline(albumentation_output["image"])
 
-        new_musicxml_path = target_path / musicxml_path.name
-        output_png_path = target_path / png_path.name
-        output_bbox_path = target_path / f"{png_path.stem}.json"
+            post_bboxes = {
+                mxml_id: {"smufl_id": smufl_id, "x": x, "y": y, "w": w, "h": h}
+                for (x, y, w, h), (mxml_id, smufl_id) in zip(
+                    albumentation_output["bboxes"].astype(int).tolist(), metadata
+                )
+            }
 
-        shutil.copy(musicxml_path, new_musicxml_path)
-        Image.fromarray(augraphy_output).save(output_png_path)
-        with open(output_bbox_path, "w") as f_json:
-            json.dump(post_bboxes, f_json, indent=4)
+            new_musicxml_path = target_path / musicxml_path.name
+            output_png_path = target_path / png_path.name
+            output_bbox_path = target_path / f"{png_path.stem}.json"
+
+            if create_debug_images:
+                output_png_debug_path = output_png_path.with_stem(
+                    f"{output_png_path.stem}_debug"
+                )
+                plot_bboxes(
+                    augraphy_output,
+                    [(x["x"], x["y"], x["w"], x["h"]) for x in post_bboxes.values()],
+                    output_png_debug_path,
+                )
+
+            shutil.copy(musicxml_path, new_musicxml_path)
+            Image.fromarray(augraphy_output).save(output_png_path)
+
+            with open(output_bbox_path, "w") as f_json:
+                json.dump(post_bboxes, f_json, indent=4)
+        except Exception as exc:
+            logging.warning(f"Found error while processing {musicxml_path}: {exc}")
+            raise
 
 
 def setup() -> Namespace:
@@ -234,11 +296,35 @@ def setup() -> Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         default="INFO",
     )
+    parser.add_argument(
+        "--omit_musicxml_generation",
+        action="store_true",
+        help="Do not generate MusicXML files again",
+    )
+    parser.add_argument(
+        "--verovio_path",
+        type=Path,
+        default=Path("verovio"),
+        help="Path to the verovio executable",
+    )
+    parser.add_argument(
+        "--inkscape_path",
+        type=Path,
+        default=Path("inkscape"),
+        help="Path to the inkscape executable",
+    )
+    parser.add_argument(
+        "--create_debug_images",
+        action="store_true",
+        help="Create debug images with overlaid bounding boxes",
+    )
 
     return parser.parse_args()
 
 
 def main(args: Namespace) -> None:
+    Verovio.configure(verovio_path=args.verovio_path)
+    Inkscape.configure(inkscape_path=args.inkscape_path)
     logging.basicConfig(level=args.logging_level, filename="augmentation_logs.log")
 
     logging.info("Checking that the input path exists")
@@ -249,8 +335,9 @@ def main(args: Namespace) -> None:
     args.clean_path.mkdir(exist_ok=True, parents=False)
     args.augmented_path.mkdir(exist_ok=True, parents=False)
 
-    generate_musicxmls(args.musicxml_path, args.clean_path)
-    render(args.clean_path, args.augmented_path)
+    if not args.omit_musicxml_generation:
+        generate_musicxmls(args.musicxml_path, args.clean_path)
+    render(args.clean_path, args.augmented_path, args.create_debug_images)
 
 
 if __name__ == "__main__":
