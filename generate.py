@@ -136,10 +136,14 @@ ALBUMENTATION_PIPELINE = alb.Compose(
 
 def generate_musicxmls(source_path: Path, target_path: Path) -> None:
     for ii, source_path in enumerate(source_path.rglob("*.mxl")):
-        score = m21.converter.parse(source_path)
+        try:
+            score = m21.converter.parse(source_path)
+        except Exception:
+            logging.warning(f"Skipped {source_path} because it cannot be parsed")
+            continue
         if not isinstance(score, m21.stream.Score):
             logging.warning(
-                "Skipping score because it does not load into the correct stream"
+                f"Skipping score because {source_path} does not load into the correct stream"
             )
             continue
         score.metadata = None
