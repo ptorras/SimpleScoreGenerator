@@ -1,4 +1,3 @@
-import importlib
 import json
 import logging
 import random
@@ -14,6 +13,7 @@ import music21 as m21
 import numpy as np
 from matplotlib import patches
 from PIL import Image
+from tqdm.auto import tqdm
 
 import image_ops
 import score_ops
@@ -195,7 +195,9 @@ def render(
     target_path: Path,
     create_debug_images: bool = False,
 ) -> None:
-    for musicxml_path in source_path.glob("*.musicxml"):
+    for musicxml_path in tqdm(
+        list(source_path.glob("*.musicxml")), desc="Rendering scores..."
+    ):
         try:
             mxml_proc = MXMLProcessor()
             svg_proc = SVGProcessor()
@@ -238,13 +240,17 @@ def render(
                 INK_AUGMENTATIONS,
                 PAPER_AUGMENTATIONS,
                 [],
+                random_seed=18,
             )
             foreground = np.array(Image.open(png_path).convert("RGB"))
+            foreground[foreground > 64] = 255
             albumentation_output = ALBUMENTATION_PIPELINE(
                 image=foreground,
                 bboxes=bboxes_albumentations,
             )
             augraphy_output = pipeline(albumentation_output["image"])
+            if augraphy_output is None:
+                raise ValueError("Augraphy did not produce an image")
 
             post_bboxes = {
                 mxml_id: {"smufl_id": smufl_id, "x": x, "y": y, "w": w, "h": h}
@@ -268,7 +274,8 @@ def render(
                 )
 
             shutil.copy(musicxml_path, new_musicxml_path)
-            Image.fromarray(augraphy_output).save(output_png_path)
+            augrahpy_output = cv2.cvtColor(augraphy_output, cv2.COLOR_BGR2RGB)
+            Image.fromarray(augrahpy_output).save(output_png_path)
 
             with open(output_bbox_path, "w") as f_json:
                 json.dump(post_bboxes, f_json, indent=4)
@@ -329,7 +336,7 @@ def setup() -> Namespace:
 def main(args: Namespace) -> None:
     Verovio.configure(verovio_path=args.verovio_path)
     Inkscape.configure(inkscape_path=args.inkscape_path)
-    logging.basicConfig(level=args.logging_level, filename="augmentation_logs.log")
+    logging.basicConfig(level=args.logging_level)
 
     logging.info("Checking that the input path exists")
     if not args.musicxml_path.exists():
