@@ -4,10 +4,13 @@ alongside JSON files with glyph and staff-line bounding boxes.
 
 import argparse
 import json
+import zipfile
+from contextlib import contextmanager
 from itertools import chain
 from multiprocessing import get_context
 from pathlib import Path
-from typing import Any, Optional
+from tempfile import TemporaryDirectory
+from typing import Any, Iterator, Optional
 
 import cv2
 import numpy as np
@@ -322,10 +325,32 @@ def run_parallel(
                 print(f"Line {musicxml_path} could not be rendered. Skipping...")
 
 
+@contextmanager
+def resolve_musicxml_root(root: Path) -> Iterator[list[Path]]:
+    """Yields the sorted list of .musicxml files under `root`.
+
+    If `root` is a .zip file, it is extracted into a temporary directory
+    (cleaned up on exit) and every .musicxml file inside it, at any depth,
+    is picked up. Otherwise `root` is treated as a directory and searched
+    for .musicxml files at its top level.
+    """
+    if root.is_file() and root.suffix.lower() == ".zip":
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            with zipfile.ZipFile(root) as zf:
+                zf.extractall(tmp_path)
+            yield sorted(tmp_path.rglob("*.musicxml"))
+    else:
+        yield sorted(root.glob("*.musicxml"))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "root", type=Path, help="Directory containing the input .musicxml files"
+        "root",
+        type=Path,
+        help="Directory containing the input .musicxml files, or a .zip "
+        "archive containing them (searched at any depth)",
     )
     parser.add_argument(
         "output", type=Path, help="Directory to write the rendered samples to"
@@ -357,14 +382,18 @@ def main() -> None:
     args = parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
-    musicxml_paths = sorted(args.root.glob("*.musicxml"))
 
-    if args.workers == 0:
-        run_serial(musicxml_paths, args.output, args.resolution, args.overwrite)
-    else:
-        run_parallel(
-            musicxml_paths, args.output, args.resolution, args.overwrite, args.workers
-        )
+    with resolve_musicxml_root(args.root) as musicxml_paths:
+        if args.workers == 0:
+            run_serial(musicxml_paths, args.output, args.resolution, args.overwrite)
+        else:
+            run_parallel(
+                musicxml_paths,
+                args.output,
+                args.resolution,
+                args.overwrite,
+                args.workers,
+            )
 
 
 if __name__ == "__main__":
