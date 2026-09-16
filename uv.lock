@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -167,7 +167,7 @@ wheels = [
 [[package]]
 name = "augraphy"
 version = "8.2.6"
-source = { editable = "../augraphy" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
     { name = "numba" },
@@ -179,18 +179,9 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "matplotlib", specifier = ">=3.4.3" },
-    { name = "numba", specifier = ">=0.57.0" },
-    { name = "numpy", specifier = ">=1.20.1" },
-    { name = "opencv-python", specifier = ">=4.5.1.48" },
-    { name = "pillow", specifier = ">=8.0.0" },
-    { name = "requests", specifier = ">=2.25.1" },
-    { name = "scikit-image", specifier = ">=0.18.1" },
-    { name = "scikit-learn", specifier = ">=0.23.2" },
-    { name = "scipy", specifier = ">=1.6.3" },
+sdist = { url = "https://files.pythonhosted.org/packages/9d/8e/eb463217e86868abb47316d448641e7a8dd17f3b38b1f49e05d3614e60d3/augraphy-8.2.6.tar.gz", hash = "sha256:bcddbca5b18a3f309470ca1f3d22c9abcf5dff6e86a83ffd456042f626dafa1c", size = 172936, upload-time = "2023-12-31T08:50:05.97Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/56/ac891bb8bca373d3786ee321a1308d2ccd442ec84abe294be0a41ab8a335/augraphy-8.2.6-py3-none-any.whl", hash = "sha256:86c4aad3bb4407c081bbfa9804ded42ff15f7f48cd609c89aa2d3fba2d0fd48d", size = 218950, upload-time = "2023-12-31T08:50:03.948Z" },
 ]
 
 [[package]]
@@ -2421,7 +2412,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "albumentations" },
-    { name = "augraphy", editable = "../augraphy" },
+    { name = "augraphy" },
     { name = "coolname", marker = "extra == 'gradio'" },
     { name = "gradio", marker = "extra == 'gradio'" },
     { name = "ipycytoscape", marker = "extra == 'jupyter'" },

@@ -1,9 +1,11 @@
 """Batch-renders monophonic MusicXML lines into single-staff Smashcima images,
-alongside JSON files with glyph and staff-line bounding boxes.
+alongside JSON files with glyph and staff-line bounding boxes, and .author
+files with the MUSCIMA++ writer number whose handwriting glyphs were used.
 """
 
 import argparse
 import json
+import shutil
 import zipfile
 from contextlib import contextmanager
 from itertools import chain
@@ -20,7 +22,9 @@ from tqdm.auto import tqdm
 ASPECT_RATIO_HINT = 256 / 64
 
 
-def make_scene_to_canvas_transform(view_box: "sc.ViewBox", dpi: float) -> "sc.Transform":
+def make_scene_to_canvas_transform(
+    view_box: "sc.ViewBox", dpi: float
+) -> "sc.Transform":
     """Builds the same mm -> pixel transform used internally by Smashcima's
     DefaultCompositor when it rasterizes a page (see
     smashcima/exporting/compositing/DefaultCompositor.py:extract_layers).
@@ -90,11 +94,25 @@ def glyph_pixel_bbox(
     }
 
 
-def sample_exists(musicxml_path: Path, output_path: Path) -> bool:
-    """True if both the PNG and the bbox JSON for this sample are on disk."""
-    return (output_path / musicxml_path.with_suffix(".png").name).exists() and (
-        output_path / musicxml_path.with_suffix(".json").name
-    ).exists()
+def output_stem_path(
+    musicxml_path: Path, musicxml_root: Path, output_path: Path
+) -> Path:
+    """Maps an input .musicxml file to its output path (without suffix),
+    mirroring its location relative to `musicxml_root` so that files with
+    the same basename in different subdirectories don't collide."""
+    return output_path / musicxml_path.relative_to(musicxml_root).with_suffix("")
+
+
+def sample_exists(musicxml_path: Path, musicxml_root: Path, output_path: Path) -> bool:
+    """True if the JPG, the bbox JSON, the copied MusicXML, and the author
+    file for this sample are all on disk."""
+    stem_path = output_stem_path(musicxml_path, musicxml_root, output_path)
+    return (
+        stem_path.with_suffix(".jpg").exists()
+        and stem_path.with_suffix(".json").exists()
+        and stem_path.with_suffix(musicxml_path.suffix).exists()
+        and stem_path.with_suffix(".author").exists()
+    )
 
 
 class MppModel(sc.orchestration.BaseHandwrittenModel):
@@ -130,7 +148,7 @@ class MppModel(sc.orchestration.BaseHandwrittenModel):
         aspect_ratio_hint: float,
         target_height: Optional[int],
         no_augmentation: bool,
-    ) -> tuple[np.ndarray, dict[str, Any]]:
+    ) -> tuple[np.ndarray, dict[str, Any], int]:
         """
         :param file: Path to the .musicxml file to synthesize
         :param aspect_ratio_hint: width/height aspect ratio of the page
@@ -235,68 +253,83 @@ class MppModel(sc.orchestration.BaseHandwrittenModel):
                 bbox["w"] *= scale_ratio
                 bbox["h"] *= scale_ratio
 
-        return bitmap, subelements
+        return bitmap, subelements, scene.mpp_writer
 
 
 def render_one(
     musicxml_path: Path,
+    musicxml_root: Path,
     model: MppModel,
     output_path: Path,
     target_height: Optional[int],
     overwrite: bool,
-) -> tuple[Path, bool]:
-    """Renders a single MusicXML file and writes its PNG/JSON outputs.
+) -> tuple[Path, bool, str]:
+    """Renders a single MusicXML file and writes its JPG/JSON outputs.
     Returns (musicxml_path, success)."""
-    if not overwrite and sample_exists(musicxml_path, output_path):
-        return musicxml_path, True
+    if not overwrite and sample_exists(musicxml_path, musicxml_root, output_path):
+        return musicxml_path, True, ""
 
     try:
-        sample, bboxes = model(
+        sample, bboxes, writer = model(
             file=musicxml_path,
             aspect_ratio_hint=ASPECT_RATIO_HINT,
             target_height=target_height,
             no_augmentation=True,
         )
-    except Exception:
-        return musicxml_path, False
+    except Exception as e:
+        return musicxml_path, False, str(e)
 
-    cv2.imwrite(str(output_path / musicxml_path.with_suffix(".png").name), sample)
-    with open(output_path / musicxml_path.with_suffix(".json").name, "w") as f_json:
+    stem_path = output_stem_path(musicxml_path, musicxml_root, output_path)
+    stem_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(stem_path.with_suffix(".jpg")), sample)
+    with open(stem_path.with_suffix(".json"), "w") as f_json:
         json.dump(bboxes, f_json, indent=4)
+    shutil.copy2(musicxml_path, stem_path.with_suffix(musicxml_path.suffix))
+    stem_path.with_suffix(".author").write_text(str(writer))
 
-    return musicxml_path, True
+    return musicxml_path, True, ""
 
 
 def run_serial(
     musicxml_paths: list[Path],
+    musicxml_root: Path,
     output_path: Path,
     target_height: Optional[int],
     overwrite: bool,
 ) -> None:
     model = MppModel(aspect_ratio_magic_factor=1)
     for musicxml_path in tqdm(musicxml_paths):
-        _, ok = render_one(musicxml_path, model, output_path, target_height, overwrite)
+        _, ok, err = render_one(
+            musicxml_path, musicxml_root, model, output_path, target_height, overwrite
+        )
         if not ok:
-            print(f"Line {musicxml_path} could not be rendered. Skipping...")
+            print(f"Line {musicxml_path} could not be rendered: {err}. Skipping...")
 
 
 _worker_state: dict[str, Any] = {}
 
 
-def _init_worker(output_path: Path, target_height: Optional[int], overwrite: bool) -> None:
+def _init_worker(
+    musicxml_root: Path,
+    output_path: Path,
+    target_height: Optional[int],
+    overwrite: bool,
+) -> None:
     # cv2/BLAS thread pools survive the fork; N processes each spawning
     # their own internal threads oversubscribes the CPU and can deadlock
     # right after fork, so pin every worker to a single thread
     cv2.setNumThreads(1)
     _worker_state["model"] = MppModel(aspect_ratio_magic_factor=1)
+    _worker_state["musicxml_root"] = musicxml_root
     _worker_state["output_path"] = output_path
     _worker_state["target_height"] = target_height
     _worker_state["overwrite"] = overwrite
 
 
-def _render_one_in_worker(musicxml_path: Path) -> tuple[Path, bool]:
+def _render_one_in_worker(musicxml_path: Path) -> tuple[Path, bool, str]:
     return render_one(
         musicxml_path,
+        _worker_state["musicxml_root"],
         _worker_state["model"],
         _worker_state["output_path"],
         _worker_state["target_height"],
@@ -306,6 +339,7 @@ def _render_one_in_worker(musicxml_path: Path) -> tuple[Path, bool]:
 
 def run_parallel(
     musicxml_paths: list[Path],
+    musicxml_root: Path,
     output_path: Path,
     target_height: Optional[int],
     overwrite: bool,
@@ -315,33 +349,37 @@ def run_parallel(
     with get_context("fork").Pool(
         workers,
         initializer=_init_worker,
-        initargs=(output_path, target_height, overwrite),
+        initargs=(musicxml_root, output_path, target_height, overwrite),
     ) as pool:
-        for musicxml_path, ok in tqdm(
+        for musicxml_path, ok, err in tqdm(
             pool.imap_unordered(_render_one_in_worker, musicxml_paths),
             total=len(musicxml_paths),
         ):
             if not ok:
-                print(f"Line {musicxml_path} could not be rendered. Skipping...")
+                print(f"Line {musicxml_path} could not be rendered: {err}. Skipping...")
 
 
 @contextmanager
-def resolve_musicxml_root(root: Path) -> Iterator[list[Path]]:
-    """Yields the sorted list of .musicxml files under `root`.
+def resolve_musicxml_root(root: Path) -> Iterator[tuple[Path, list[Path]]]:
+    """Yields (search_root, sorted list of .musicxml files under it).
 
     If `root` is a .zip file, it is extracted into a temporary directory
     (cleaned up on exit) and every .musicxml file inside it, at any depth,
-    is picked up. Otherwise `root` is treated as a directory and searched
-    for .musicxml files at its top level.
+    is picked up; `search_root` is that temporary directory, so callers can
+    recover each file's path relative to the archive and mirror the
+    archive's directory structure in the output (files with the same
+    basename in different subdirectories must not collide). Otherwise
+    `root` is treated as a directory and searched for .musicxml files at
+    its top level.
     """
     if root.is_file() and root.suffix.lower() == ".zip":
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             with zipfile.ZipFile(root) as zf:
                 zf.extractall(tmp_path)
-            yield sorted(tmp_path.rglob("*.musicxml"))
+            yield tmp_path, sorted(tmp_path.rglob("*.musicxml"))
     else:
-        yield sorted(root.glob("*.musicxml"))
+        yield root, sorted(root.glob("*.musicxml"))
 
 
 def parse_args() -> argparse.Namespace:
@@ -383,12 +421,19 @@ def main() -> None:
 
     args.output.mkdir(parents=True, exist_ok=True)
 
-    with resolve_musicxml_root(args.root) as musicxml_paths:
+    with resolve_musicxml_root(args.root) as (musicxml_root, musicxml_paths):
         if args.workers == 0:
-            run_serial(musicxml_paths, args.output, args.resolution, args.overwrite)
+            run_serial(
+                musicxml_paths,
+                musicxml_root,
+                args.output,
+                args.resolution,
+                args.overwrite,
+            )
         else:
             run_parallel(
                 musicxml_paths,
+                musicxml_root,
                 args.output,
                 args.resolution,
                 args.overwrite,
