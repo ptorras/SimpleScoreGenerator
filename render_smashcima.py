@@ -8,8 +8,8 @@ from lxml import etree
 from tqdm.auto import tqdm
 
 # MuseScore.configure(Path(r"/Applications/MuseScore 4.app/Contents/MacOS/mscore"))
-score_path = Path("/Users/ptorras/Documents/Datasets/ComrefMusicxml")
-target_path = Path("/Users/ptorras/Documents/Datasets/SmashcimaComref")
+score_path = Path("/DATA/ComrefMusicxml")
+target_path = Path("/DATA/SmashcimaComref")
 target_path.mkdir(exist_ok=True)
 
 for mxml_path in score_path.glob("*.mxl"):
@@ -43,13 +43,14 @@ for score in tqdm(list(score_path.glob("*.musicxml"))):
         exporter = sc.exporting.SvgExporter(render_labeled_regions=True)
 
         scene = model(score)
+        svg = exporter.export_string(scene.pages[0].view_box)
+        with open(target_path / f"{score.stem}.svg", "w") as f:
+            f.write(svg)
 
         for ii, page in enumerate(scene.pages):
             bitmap = scene.render(page)
             cv2.imwrite(str(target_path / f"{score.stem}_page_{ii}.png"), bitmap)
-            svg = exporter.export_string(page.view_box)
-            with open(target_path / f"{score.stem}_page_{ii}.svg", "w") as f:
-                f.write(svg)
+
     except Exception as exc:
         print(exc)
         continue

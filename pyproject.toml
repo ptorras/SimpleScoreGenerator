@@ -3,5 +3,14 @@ name = "simplescoregenerator"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "ipython>=9.17.1",
+    "jupyterlab>=4.6.3",
+    "jupytext>=1.19.5",
+    "matplotlib>=3.10.9",
+    "matplotlib-backend-kitty>=2.1.2",
     "music21>=10.3.0",
+    "smashcima",
 ]
+
+[tool.uv.sources]
+smashcima = { path = "../Smashcima", editable = true }
