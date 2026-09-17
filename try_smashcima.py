@@ -14,6 +14,7 @@
 
 #
 # # %%
+from jinja2.nodes import With
 from typing import TypeVar, Any
 from pathlib import Path
 import smashcima as sc
@@ -289,7 +290,9 @@ from pathlib import Path  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import cv2  # noqa: E402
 
-demo_file = Path("/DATA/MonophonicLines/w0_p0_m6to12_v5.musicxml")
+demo_file = Path(
+    "/data/133-1/users/ptorras/MonophonicMusicXMLs/w0_p0_m6to12_v5.musicxml"
+)
 demo_path = Path("./demo.png")
 
 synthesis_model = MppModel(aspect_ratio_magic_factor=1)
@@ -316,8 +319,8 @@ draw_bboxes(sample, bboxes)
 from tqdm.auto import tqdm
 import json
 
-MONOPHONIC_LINE_PATH = Path("/DATA/MonophonicLines/")
-MONOPHONIC_LINE_OUTPUT_PATH = Path("/DATA/MonophonicLinesSmashcima/")
+MONOPHONIC_LINE_PATH = Path("/data/133-1/users/ptorras/MonophonicMusicXMLs/")
+MONOPHONIC_LINE_OUTPUT_PATH = Path("/data/133-1/users/ptorras/test/")
 
 
 MONOPHONIC_LINE_OUTPUT_PATH.mkdir(exist_ok=True)
@@ -406,3 +409,31 @@ with get_context("fork").Pool(N_WORKERS, initializer=_init_worker) as pool:
     ):
         if not ok:
             print(f"Line {musicxml_path} could not be rendered. Skipping...")
+
+# %%
+
+
+from pathlib import Path  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import cv2  # noqa: E402
+import json
+
+demo_file = Path(
+    "/data/133-1/users/ptorras/MonophonicLinesSmashcimaStrong/w0_p0_m6to13_v4.jpg"
+)
+demo_boxes = demo_file.with_suffix(".json")
+
+
+with open(demo_boxes, "r") as f_out:
+    bboxes = json.load(f_out)
+
+
+plt.figure()
+plt.imshow(
+    cv2.cvtColor(
+        draw_bboxes(cv2.imread(str(demo_file)), bboxes),
+        cv2.COLOR_BGR2RGB,
+    )
+)
+plt.show()
+plt.close()

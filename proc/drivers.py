@@ -69,6 +69,8 @@ class Verovio:
 
 
 class MuseScore:
+    """Abstraction over musescore"""
+
     _MUSESCORE_PATH: Optional[Path] = None
     MUSESCORE_VERSION: Optional[str] = None
 
